@@ -34,10 +34,13 @@ def get_anthropic_client():
 
 def get_sheets_client():
     try:
-        service_account_json = st.secrets.get("GOOGLE_SERVICE_ACCOUNT", os.getenv("GOOGLE_SERVICE_ACCOUNT"))
-        if not service_account_json:
-            return None
-        service_account_info = json.loads(service_account_json)
+        if "gcp_service_account" in st.secrets:
+            service_account_info = dict(st.secrets["gcp_service_account"])
+        else:
+            service_account_json = os.getenv("GOOGLE_SERVICE_ACCOUNT")
+            if not service_account_json:
+                return None
+            service_account_info = json.loads(service_account_json)
         scope = [
             "https://spreadsheets.google.com/feeds",
             "https://www.googleapis.com/auth/drive",
