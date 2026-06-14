@@ -22,7 +22,7 @@ st.set_page_config(
 )
 
 SPREADSHEET_NAME = "FAX発注書管理"
-HEADERS = ["受信日", "商品名", "数量", "発注者", "納品先", "納品希望日", "発注№", "お客様№", "備考", "ファイル名"]
+HEADERS = ["FAX日付", "商品名", "数量", "発注者", "納品先名称", "納品先郵便番号", "納品先住所", "納品希望日", "発注№", "お客様№", "備考", "ファイル名"]
 
 DATA_KEYS = {
     "商品名": "商品名",
@@ -86,11 +86,16 @@ def extract_fax_data(image_bytes, media_type):
     prompt = """この発注書FAXから以下の項目を読み取り、JSON形式のみで返してください（説明文不要）。
 項目が記載されていない場合は空文字列にしてください。
 
+FAX日付について：用紙の右端・左端・ヘッダー部分にある送信日時、作成日、発注日、NSPHFAX等のFAXシステムが記録した日付を読み取ってください。
+
 {
+  "fax日付": "FAX用紙に記載の日付（YYYY年M月D日形式、不明は空）",
   "商品名": "発注商品名（複数ある場合はカンマ区切り）",
   "数量": "数量と単位",
   "発注者": "発注者名または会社名",
-  "納品先": "納品先の名称・住所",
+  "納品先名称": "納品先の会社名・店舗名など（住所は除く）",
+  "納品先郵便番号": "納品先の郵便番号（ハイフンあり、例：123-4567）",
+  "納品先住所": "納品先の住所（都道府県から番地まで、建物名含む）",
   "納品希望日": "希望納品日（YYYY年M月D日形式、不明は空）",
   "発注番号": "発注番号・注文番号",
   "顧客番号": "お客様番号・顧客番号",
@@ -165,11 +170,13 @@ def save_to_sheets(data, filename):
 
         # ヘッダー名で列を検索して書き込む（列の追加・入れ替えに対応）
         row_data = {
-            "受信日": datetime.now().strftime("%Y/%m/%d %H:%M"),
+            "FAX日付": data.get("FAX日付", ""),
             "商品名": data.get("商品名", ""),
             "数量": data.get("数量", ""),
             "発注者": data.get("発注者", ""),
-            "納品先": data.get("納品先", ""),
+            "納品先名称": data.get("納品先名称", ""),
+            "納品先郵便番号": data.get("納品先郵便番号", ""),
+            "納品先住所": data.get("納品先住所", ""),
             "納品希望日": data.get("納品希望日", ""),
             "発注№": data.get("発注番号", ""),
             "お客様№": data.get("顧客番号", ""),
@@ -210,10 +217,13 @@ if uploaded_files:
                     extracted = extract_fax_data(image_bytes, media_type)
                     results.append({
                         "ファイル名": f.name,
+                        "FAX日付": extracted.get("fax日付", ""),
                         "商品名": extracted.get("商品名", ""),
                         "数量": extracted.get("数量", ""),
                         "発注者": extracted.get("発注者", ""),
-                        "納品先": extracted.get("納品先", ""),
+                        "納品先名称": extracted.get("納品先名称", ""),
+                        "納品先郵便番号": extracted.get("納品先郵便番号", ""),
+                        "納品先住所": extracted.get("納品先住所", ""),
                         "納品希望日": extracted.get("納品希望日", ""),
                         "発注№": extracted.get("発注番号", ""),
                         "お客様№": extracted.get("顧客番号", ""),
@@ -242,10 +252,13 @@ if "results" in st.session_state and st.session_state["results"]:
         for _, row in edited_df.iterrows():
             filename = row.get("ファイル名", "")
             data = {
+                "FAX日付": row.get("FAX日付", ""),
                 "商品名": row.get("商品名", ""),
                 "数量": row.get("数量", ""),
                 "発注者": row.get("発注者", ""),
-                "納品先": row.get("納品先", ""),
+                "納品先名称": row.get("納品先名称", ""),
+                "納品先郵便番号": row.get("納品先郵便番号", ""),
+                "納品先住所": row.get("納品先住所", ""),
                 "納品希望日": row.get("納品希望日", ""),
                 "発注番号": row.get("発注№", ""),
                 "顧客番号": row.get("お客様№", ""),
