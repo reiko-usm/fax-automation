@@ -10,6 +10,7 @@ import re
 from PIL import Image
 import fitz  # PyMuPDF
 import os
+import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -17,11 +18,22 @@ load_dotenv()
 st.set_page_config(
     page_title="FAX発注書管理",
     page_icon="📠",
-    layout="centered"
+    layout="wide"
 )
 
 SPREADSHEET_NAME = "FAX発注書管理"
 HEADERS = ["受信日", "商品名", "数量", "発注者", "納品先", "納品希望日", "発注№", "お客様№", "備考", "ファイル名"]
+
+DATA_KEYS = {
+    "商品名": "商品名",
+    "数量": "数量",
+    "発注者": "発注者",
+    "納品先": "納品先",
+    "納品希望日": "納品希望日",
+    "発注№": "発注番号",
+    "お客様№": "顧客番号",
+    "備考": "備考",
+}
 
 
 def get_anthropic_client():
@@ -33,7 +45,6 @@ def get_anthropic_client():
 
 
 def get_sheets_client():
-    import base64
     b64 = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_B64", os.getenv("GOOGLE_SERVICE_ACCOUNT_B64", ""))
     if not b64:
         raise ValueError("GOOGLE_SERVICE_ACCOUNT_B64 が設定されていません")
@@ -127,12 +138,9 @@ def get_month_tab_name(delivery_date_str):
 
 
 def save_to_sheets(data, filename):
-    """Google Sheetsの納品月タブにデータを追記する。"""
-    gc = get_sheets_client()
-    if not gc:
-        return False, "Google Sheetsの認証情報が設定されていません"
-
+    """Google Sheetsの納品月タブにデータを追記する（ヘッダー名で列を検索）。"""
     try:
+        gc = get_sheets_client()
         spreadsheet_id = st.secrets.get("SPREADSHEET_ID", os.getenv("SPREADSHEET_ID", ""))
         if spreadsheet_id:
             spreadsheet = gc.open_by_key(spreadsheet_id)
@@ -140,7 +148,7 @@ def save_to_sheets(data, filename):
             try:
                 spreadsheet = gc.open(SPREADSHEET_NAME)
             except gspread.SpreadsheetNotFound:
-                return False, "スプレッドシートが見つかりません。SPREADSHEET_IDを設定してください。"
+                return False, "スプレッドシートが見つかりません"
 
         tab_name = get_month_tab_name(data.get("納品希望日", ""))
 
@@ -150,21 +158,25 @@ def save_to_sheets(data, filename):
             worksheet = spreadsheet.add_worksheet(title=tab_name, rows=1000, cols=len(HEADERS))
             worksheet.append_row(HEADERS)
 
-        if not worksheet.row_values(1):
+        header_row = worksheet.row_values(1)
+        if not header_row:
             worksheet.append_row(HEADERS)
+            header_row = HEADERS
 
-        row = [
-            datetime.now().strftime("%Y/%m/%d %H:%M"),
-            data.get("商品名", ""),
-            data.get("数量", ""),
-            data.get("発注者", ""),
-            data.get("納品先", ""),
-            data.get("納品希望日", ""),
-            data.get("発注番号", ""),
-            data.get("顧客番号", ""),
-            data.get("備考", ""),
-            filename,
-        ]
+        # ヘッダー名で列を検索して書き込む（列の追加・入れ替えに対応）
+        row_data = {
+            "受信日": datetime.now().strftime("%Y/%m/%d %H:%M"),
+            "商品名": data.get("商品名", ""),
+            "数量": data.get("数量", ""),
+            "発注者": data.get("発注者", ""),
+            "納品先": data.get("納品先", ""),
+            "納品希望日": data.get("納品希望日", ""),
+            "発注№": data.get("発注番号", ""),
+            "お客様№": data.get("顧客番号", ""),
+            "備考": data.get("備考", ""),
+            "ファイル名": filename,
+        }
+        row = [row_data.get(h, "") for h in header_row]
         worksheet.append_row(row)
         return True, spreadsheet.url
 
@@ -177,65 +189,76 @@ def save_to_sheets(data, filename):
 st.title("📠 FAX発注書管理")
 st.caption("FAX画像をアップロードして、発注書データをGoogle Sheetsに自動保存します")
 
-uploaded_file = st.file_uploader(
-    "FAX画像・PDFをアップロード",
+uploaded_files = st.file_uploader(
+    "FAX画像・PDFをアップロード（複数可）",
     type=["jpg", "jpeg", "png", "tif", "tiff", "pdf"],
+    accept_multiple_files=True,
     help="PCFaxで受信した画像ファイルをここにドロップしてください",
 )
 
-if uploaded_file:
-    col1, col2 = st.columns([1, 1])
+if uploaded_files:
+    st.info(f"{len(uploaded_files)} ファイル選択済み")
 
-    with col1:
-        st.subheader("FAX画像")
-        if uploaded_file.name.lower().endswith(".pdf"):
-            st.info(f"📄 PDFファイル: {uploaded_file.name}")
-        else:
-            uploaded_file.seek(0)
-            st.image(uploaded_file, use_column_width=True)
-
-    with col2:
-        st.subheader("自動読み取り")
-        if st.button("🔍 AIで読み取る", type="primary", use_container_width=True):
-            with st.spinner("Claude AIが読み取り中...（数秒かかります）"):
+    if st.button("🔍 AIで一括読み取り", type="primary", use_container_width=True):
+        results = []
+        progress = st.progress(0)
+        for i, f in enumerate(uploaded_files):
+            with st.spinner(f"読み取り中: {f.name}（{i+1}/{len(uploaded_files)}）"):
                 try:
-                    uploaded_file.seek(0)
-                    image_bytes, media_type = process_file(uploaded_file)
+                    f.seek(0)
+                    image_bytes, media_type = process_file(f)
                     extracted = extract_fax_data(image_bytes, media_type)
-                    st.session_state["extracted"] = extracted
-                    st.session_state["filename"] = uploaded_file.name
-                    st.success("読み取り完了！下で内容を確認・修正してください。")
+                    results.append({
+                        "ファイル名": f.name,
+                        "商品名": extracted.get("商品名", ""),
+                        "数量": extracted.get("数量", ""),
+                        "発注者": extracted.get("発注者", ""),
+                        "納品先": extracted.get("納品先", ""),
+                        "納品希望日": extracted.get("納品希望日", ""),
+                        "発注№": extracted.get("発注番号", ""),
+                        "お客様№": extracted.get("顧客番号", ""),
+                        "備考": extracted.get("備考", ""),
+                    })
                 except Exception as e:
-                    st.error(f"読み取りエラー: {e}")
+                    st.error(f"❌ {f.name}: {e}")
+            progress.progress((i + 1) / len(uploaded_files))
+        st.session_state["results"] = results
+        st.success(f"読み取り完了！{len(results)} 件")
 
-if "extracted" in st.session_state:
+if "results" in st.session_state and st.session_state["results"]:
     st.divider()
     st.subheader("📋 内容の確認・修正")
-    st.caption("AIが読み取った内容です。誤りがあれば修正してから保存してください。")
+    st.caption("セルをクリックして直接編集できます。修正後に「全て保存」してください。")
 
-    data = st.session_state["extracted"]
+    edited_df = st.data_editor(
+        pd.DataFrame(st.session_state["results"]),
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+    )
 
-    col1, col2 = st.columns(2)
-    with col1:
-        data["商品名"] = st.text_input("商品名", value=data.get("商品名", ""))
-        data["数量"] = st.text_input("数量", value=data.get("数量", ""))
-        data["発注者"] = st.text_input("発注者", value=data.get("発注者", ""))
-        data["納品先"] = st.text_input("納品先", value=data.get("納品先", ""))
-    with col2:
-        data["納品希望日"] = st.text_input("納品希望日", value=data.get("納品希望日", ""))
-        data["発注番号"] = st.text_input("発注№", value=data.get("発注番号", ""))
-        data["顧客番号"] = st.text_input("お客様№", value=data.get("顧客番号", ""))
-        data["備考"] = st.text_input("備考", value=data.get("備考", ""))
-
-    tab_name = get_month_tab_name(data.get("納品希望日", ""))
-    st.info(f"💾 保存先タブ: **{tab_name}**（納品希望日から自動判定）")
-
-    if st.button("✅ Google Sheetsに保存", type="primary", use_container_width=True):
-        with st.spinner("保存中..."):
-            success, result = save_to_sheets(data, st.session_state.get("filename", ""))
+    if st.button("✅ 全て保存", type="primary", use_container_width=True):
+        success_count = 0
+        for _, row in edited_df.iterrows():
+            filename = row.get("ファイル名", "")
+            data = {
+                "商品名": row.get("商品名", ""),
+                "数量": row.get("数量", ""),
+                "発注者": row.get("発注者", ""),
+                "納品先": row.get("納品先", ""),
+                "納品希望日": row.get("納品希望日", ""),
+                "発注番号": row.get("発注№", ""),
+                "顧客番号": row.get("お客様№", ""),
+                "備考": row.get("備考", ""),
+            }
+            success, result = save_to_sheets(data, filename)
             if success:
-                st.success("保存しました！")
-                st.markdown(f"[📊 Google Sheetsを開く]({result})")
-                del st.session_state["extracted"]
+                success_count += 1
+                st.success(f"✅ {filename}")
             else:
-                st.error(f"保存エラー: {result}")
+                st.error(f"❌ {filename}: {result}")
+
+        if success_count > 0:
+            st.balloons()
+            st.markdown(f"[📊 Google Sheetsを開く]({result})")
+            del st.session_state["results"]
