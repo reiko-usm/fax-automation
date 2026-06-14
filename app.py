@@ -33,14 +33,11 @@ def get_anthropic_client():
 
 
 def get_sheets_client():
-    secret_keys = list(st.secrets.keys()) if hasattr(st, "secrets") else []
-    if "gcp_service_account" in st.secrets:
-        service_account_info = dict(st.secrets["gcp_service_account"])
-    else:
-        service_account_json = os.getenv("GOOGLE_SERVICE_ACCOUNT")
-        if not service_account_json:
-            raise ValueError(f"gcp_service_account not found. Available keys: {secret_keys}")
-        service_account_info = json.loads(service_account_json)
+    import base64
+    b64 = st.secrets.get("GOOGLE_SERVICE_ACCOUNT_B64", os.getenv("GOOGLE_SERVICE_ACCOUNT_B64", ""))
+    if not b64:
+        raise ValueError("GOOGLE_SERVICE_ACCOUNT_B64 が設定されていません")
+    service_account_info = json.loads(base64.b64decode(b64).decode("utf-8"))
     scope = [
         "https://spreadsheets.google.com/feeds",
         "https://www.googleapis.com/auth/drive",
