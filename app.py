@@ -33,22 +33,20 @@ def get_anthropic_client():
 
 
 def get_sheets_client():
-    try:
-        if "gcp_service_account" in st.secrets:
-            service_account_info = dict(st.secrets["gcp_service_account"])
-        else:
-            service_account_json = os.getenv("GOOGLE_SERVICE_ACCOUNT")
-            if not service_account_json:
-                return None
-            service_account_info = json.loads(service_account_json)
-        scope = [
-            "https://spreadsheets.google.com/feeds",
-            "https://www.googleapis.com/auth/drive",
-        ]
-        creds = Credentials.from_service_account_info(service_account_info, scopes=scope)
-        return gspread.authorize(creds)
-    except Exception:
-        return None
+    secret_keys = list(st.secrets.keys()) if hasattr(st, "secrets") else []
+    if "gcp_service_account" in st.secrets:
+        service_account_info = dict(st.secrets["gcp_service_account"])
+    else:
+        service_account_json = os.getenv("GOOGLE_SERVICE_ACCOUNT")
+        if not service_account_json:
+            raise ValueError(f"gcp_service_account not found. Available keys: {secret_keys}")
+        service_account_info = json.loads(service_account_json)
+    scope = [
+        "https://spreadsheets.google.com/feeds",
+        "https://www.googleapis.com/auth/drive",
+    ]
+    creds = Credentials.from_service_account_info(service_account_info, scopes=scope)
+    return gspread.authorize(creds)
 
 
 def process_file(uploaded_file):
